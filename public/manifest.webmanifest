@@ -1,0 +1,14 @@
+{
+  "name": "UtilityFlow Property Operations",
+  "short_name": "UtilityFlow",
+  "description": "Property and utility management workspace",
+  "start_url": "/dashboard",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f8f7",
+  "theme_color": "#173d3d",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icon.svg?v=2", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
