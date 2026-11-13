@@ -1,0 +1,99 @@
+name: Run UtilityFlow production migrations
+
+on:
+  workflow_run:
+    workflows: [Deploy UtilityFlow to production (FTP)]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      protocol:
+        description: FTP transport (blank uses FTP_PROTOCOL secret)
+        required: false
+        default: ''
+        type: choice
+        options: ['', ftps, ftp, ftps-legacy, sftp]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: utilityflow-production-migrations
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout deployed revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve FTP application directory
+        id: ftp
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_APP_DIR: ${{ secrets.FTP_SERVER_DIR }}
+          FTP_PROTOCOL: ${{ inputs.protocol || secrets.FTP_PROTOCOL }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$FTP_SERVER" || -z "$FTP_APP_DIR" ]]; then
+            echo "::error::Set FTP_SERVER and FTP_SERVER_DIR in GitHub Actions secrets."
+            exit 1
+          fi
+          PROTO="${FTP_PROTOCOL:-ftps}"
+          case "$PROTO" in
+            sftp) PORT="${FTP_PORT:-22}" ;;
+            ftps-legacy) PORT="${FTP_PORT:-990}" ;;
+            ftp|ftps) PORT="${FTP_PORT:-21}" ;;
+            *) echo "::error::Unsupported FTP protocol: $PROTO"; exit 1 ;;
+          esac
+          HOST="${FTP_SERVER#ftp://}"
+          HOST="${HOST#ftps://}"
+          HOST="${HOST#sftp://}"
+          HOST="${HOST%%/*}"
+          [[ "$FTP_APP_DIR" == */ ]] || FTP_APP_DIR="$FTP_APP_DIR/"
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "app_dir=$FTP_APP_DIR" >> "$GITHUB_OUTPUT"
+          echo "protocol=$PROTO" >> "$GITHUB_OUTPUT"
+          echo "port=$PORT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload migration source files
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: ${{ steps.ftp.outputs.host }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          port: ${{ steps.ftp.outputs.port }}
+          protocol: ${{ steps.ftp.outputs.protocol }}
+          local-dir: ./database/migrations/
+          server-dir: ${{ steps.ftp.outputs.app_dir }}database/migrations/
+          state-name: utilityflow-migrations-${{ github.run_id }}.json
+          timeout: 1200000
+          log-level: standard
+
+      - name: Run protected Laravel migrations
+        env:
+          DEPLOY_SITE_URL: ${{ secrets.DEPLOY_SITE_URL }}
+          DEPLOY_EXTRACT_TOKEN: ${{ secrets.DEPLOY_EXTRACT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEPLOY_SITE_URL" || -z "$DEPLOY_EXTRACT_TOKEN" ]]; then
+            echo "::error::Set DEPLOY_SITE_URL and DEPLOY_EXTRACT_TOKEN secrets."
+            exit 1
+          fi
+          URL="${DEPLOY_SITE_URL%/}/deploy-migrate.php"
+          STATUS=$(curl -sS --connect-timeout 20 --max-time 300 -X POST -H "Authorization: Bearer $DEPLOY_EXTRACT_TOKEN" -o "$RUNNER_TEMP/migrate.txt" -w '%{http_code}' "$URL" || true)
+          cat "$RUNNER_TEMP/migrate.txt"
+          if [[ "$STATUS" == "409" ]] && grep -q "Production vendor dependencies are not installed" "$RUNNER_TEMP/migrate.txt"; then
+            echo "::notice::Migrations were skipped because this is the first deploy. Upload vendor dependencies, then run this workflow manually once."
+            exit 0
+          fi
+          if [[ "$STATUS" != "200" ]]; then
+            echo "::error::Migration runner failed with HTTP ${STATUS:-000}. Review the output above before retrying."
+            exit 1
+          fi

@@ -594,3 +594,34 @@ document.querySelectorAll('[data-tenant-invoice-picker]').forEach((picker) => {
 });
 
 document.querySelectorAll('dialog[data-open-on-error="true"]').forEach((dialog) => dialog.showModal());
+
+const waterWorkflowTabs = Array.from(document.querySelectorAll('[data-water-tab]'));
+if (waterWorkflowTabs.length) {
+    waterWorkflowTabs.forEach((tab, index) => {
+        const panel = document.getElementById(tab.getAttribute('aria-controls'));
+        tab.tabIndex = tab.getAttribute('aria-selected') === 'true' ? 0 : -1;
+        if (panel) panel.hidden = tab.getAttribute('aria-selected') !== 'true';
+
+        tab.addEventListener('click', () => {
+            waterWorkflowTabs.forEach((item) => {
+                const selected = item === tab;
+                item.setAttribute('aria-selected', selected ? 'true' : 'false');
+                item.tabIndex = selected ? 0 : -1;
+                const panel = document.getElementById(item.getAttribute('aria-controls'));
+                if (panel) panel.hidden = !selected;
+            });
+        });
+
+        tab.addEventListener('keydown', (event) => {
+            if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const nextIndex = event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                    ? waterWorkflowTabs.length - 1
+                    : (index + (event.key === 'ArrowRight' ? 1 : -1) + waterWorkflowTabs.length) % waterWorkflowTabs.length;
+            waterWorkflowTabs[nextIndex].focus();
+            waterWorkflowTabs[nextIndex].click();
+        });
+    });
+}

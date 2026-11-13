@@ -1,0 +1,40 @@
+name: UtilityFlow production maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Select the maintenance operation
+        required: true
+        default: clear-cache
+        type: choice
+        options: [clear-cache]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: utilityflow-production-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintenance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run protected cache clear
+        env:
+          DEPLOY_SITE_URL: ${{ secrets.DEPLOY_SITE_URL }}
+          DEPLOY_EXTRACT_TOKEN: ${{ secrets.DEPLOY_EXTRACT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEPLOY_SITE_URL" || -z "$DEPLOY_EXTRACT_TOKEN" ]]; then
+            echo "::error::Set DEPLOY_SITE_URL and DEPLOY_EXTRACT_TOKEN secrets."
+            exit 1
+          fi
+          URL="${DEPLOY_SITE_URL%/}/deploy-clear-cache.php"
+          STATUS=$(curl -sS --connect-timeout 20 --max-time 120 -X POST -H "Authorization: Bearer $DEPLOY_EXTRACT_TOKEN" -o "$RUNNER_TEMP/maintenance.txt" -w '%{http_code}' "$URL" || true)
+          cat "$RUNNER_TEMP/maintenance.txt"
+          if [[ "$STATUS" != "200" ]]; then
+            echo "::error::Cache maintenance failed with HTTP ${STATUS:-000}."
+            exit 1
+          fi

@@ -1,0 +1,103 @@
+name: Upload UtilityFlow production vendor dependencies (FTP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      protocol:
+        description: FTP transport (blank uses FTP_PROTOCOL secret)
+        required: false
+        default: ''
+        type: choice
+        options: ['', ftps, ftp, ftps-legacy, sftp]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: utilityflow-vendor-upload
+  cancel-in-progress: false
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: bcmath, ctype, curl, dom, fileinfo, gd, json, mbstring, openssl, pdo, pdo_mysql, tokenizer, xml, zip
+          coverage: none
+
+      - name: Build production vendor archive
+        run: |
+          set -euo pipefail
+          composer install --no-dev --no-scripts --no-interaction --prefer-dist --optimize-autoloader --no-progress
+          zip -qr vendor.zip vendor/
+          split -b 5m vendor.zip vendor.part.
+          mkdir vendor-upload
+          mv vendor.part.* vendor-upload/
+
+      - name: Resolve FTP settings
+        id: ftp
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_APP_DIR: ${{ secrets.FTP_SERVER_DIR }}
+          SECRET_PROTOCOL: ${{ inputs.protocol || secrets.FTP_PROTOCOL }}
+          SECRET_PORT: ${{ secrets.FTP_PORT }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$FTP_SERVER" || -z "$FTP_APP_DIR" ]]; then
+            echo "::error::Set FTP_SERVER and FTP_SERVER_DIR in GitHub Actions secrets."
+            exit 1
+          fi
+          PROTO="${SECRET_PROTOCOL:-ftps}"
+          case "$PROTO" in
+            sftp) PORT="${SECRET_PORT:-22}" ;;
+            ftps-legacy) PORT="${SECRET_PORT:-990}" ;;
+            ftp|ftps) PORT="${SECRET_PORT:-21}" ;;
+            *) echo "::error::Unsupported FTP protocol: $PROTO"; exit 1 ;;
+          esac
+          HOST="${FTP_SERVER#ftp://}"
+          HOST="${HOST#ftps://}"
+          HOST="${HOST#sftp://}"
+          HOST="${HOST%%/*}"
+          [[ "$FTP_APP_DIR" == */ ]] || FTP_APP_DIR="$FTP_APP_DIR/"
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "protocol=$PROTO" >> "$GITHUB_OUTPUT"
+          echo "port=$PORT" >> "$GITHUB_OUTPUT"
+          echo "app_dir=$FTP_APP_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Upload vendor archive chunks
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: ${{ steps.ftp.outputs.host }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          port: ${{ steps.ftp.outputs.port }}
+          protocol: ${{ steps.ftp.outputs.protocol }}
+          local-dir: ./vendor-upload/
+          server-dir: ${{ steps.ftp.outputs.app_dir }}
+          state-name: utilityflow-vendor-${{ github.run_id }}.json
+          timeout: 1200000
+          log-level: standard
+
+      - name: Extract vendor archive on the server
+        env:
+          DEPLOY_SITE_URL: ${{ secrets.DEPLOY_SITE_URL }}
+          DEPLOY_EXTRACT_TOKEN: ${{ secrets.DEPLOY_EXTRACT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEPLOY_SITE_URL" || -z "$DEPLOY_EXTRACT_TOKEN" ]]; then
+            echo "::error::Set DEPLOY_SITE_URL and DEPLOY_EXTRACT_TOKEN secrets."
+            exit 1
+          fi
+          URL="${DEPLOY_SITE_URL%/}/deploy-extract-vendor.php"
+          STATUS=$(curl -sS --connect-timeout 20 --max-time 900 -X POST -H "Authorization: Bearer $DEPLOY_EXTRACT_TOKEN" -o "$RUNNER_TEMP/vendor-extract.txt" -w '%{http_code}' "$URL" || true)
+          cat "$RUNNER_TEMP/vendor-extract.txt"
+          if [[ "$STATUS" != "200" ]]; then
+            echo "::error::Vendor extraction failed with HTTP ${STATUS:-000}."
+            exit 1
+          fi

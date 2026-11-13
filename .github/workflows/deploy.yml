@@ -1,0 +1,179 @@
+name: Deploy UtilityFlow to production (FTP)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      protocol:
+        description: FTP transport (blank uses FTP_PROTOCOL secret)
+        required: false
+        default: ''
+        type: choice
+        options: ['', ftps, ftp, ftps-legacy, sftp]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: utilityflow-production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and upload UtilityFlow
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve and validate FTP settings
+        id: ftp
+        env:
+          FTP_SERVER: ${{ secrets.FTP_SERVER }}
+          FTP_PROTOCOL: ${{ inputs.protocol || secrets.FTP_PROTOCOL }}
+          FTP_PORT: ${{ secrets.FTP_PORT }}
+          FTP_APP_DIR: ${{ secrets.FTP_SERVER_DIR }}
+          FTP_PUBLIC_DIR: ${{ secrets.FTP_PUBLIC_DIR }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$FTP_SERVER" || -z "$FTP_APP_DIR" || -z "$FTP_PUBLIC_DIR" ]]; then
+            echo "::error::Set FTP_SERVER, FTP_SERVER_DIR, and FTP_PUBLIC_DIR in GitHub Actions secrets."
+            exit 1
+          fi
+          PROTO="${FTP_PROTOCOL:-ftps}"
+          case "$PROTO" in
+            sftp) PORT="${FTP_PORT:-22}" ;;
+            ftps-legacy) PORT="${FTP_PORT:-990}" ;;
+            ftp|ftps) PORT="${FTP_PORT:-21}" ;;
+            *) echo "::error::Unsupported FTP protocol: $PROTO"; exit 1 ;;
+          esac
+          HOST="${FTP_SERVER#ftp://}"
+          HOST="${HOST#ftps://}"
+          HOST="${HOST#sftp://}"
+          HOST="${HOST%%/*}"
+          [[ "$FTP_APP_DIR" == */ ]] || FTP_APP_DIR="$FTP_APP_DIR/"
+          [[ "$FTP_PUBLIC_DIR" == */ ]] || FTP_PUBLIC_DIR="$FTP_PUBLIC_DIR/"
+          echo "protocol=$PROTO" >> "$GITHUB_OUTPUT"
+          echo "port=$PORT" >> "$GITHUB_OUTPUT"
+          echo "host=$HOST" >> "$GITHUB_OUTPUT"
+          echo "app_dir=$FTP_APP_DIR" >> "$GITHUB_OUTPUT"
+          echo "public_dir=$FTP_PUBLIC_DIR" >> "$GITHUB_OUTPUT"
+          echo "Transport: $PROTO on port $PORT; app and public targets are configured."
+
+      - name: Check FTP port
+        env:
+          FTP_HOST: ${{ steps.ftp.outputs.host }}
+          FTP_PORT: ${{ steps.ftp.outputs.port }}
+        run: |
+          if ! timeout 25 bash -c "echo >/dev/tcp/$FTP_HOST/$FTP_PORT" 2>/dev/null; then
+            echo "::error::FTP server port is unreachable from GitHub Actions. Verify host, port, and firewall allow-list."
+            exit 1
+          fi
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: bcmath, ctype, curl, dom, fileinfo, gd, json, mbstring, openssl, pdo, pdo_mysql, tokenizer, xml, zip
+          coverage: none
+
+      - name: Prepare production PHP dependencies
+        run: |
+          cp .env.example .env
+          composer install --no-dev --no-scripts --no-interaction --prefer-dist --optimize-autoloader --no-progress
+          php artisan package:discover --ansi
+          php artisan config:clear
+          rm -f bootstrap/cache/routes*.php bootstrap/cache/events.php
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Build production assets
+        run: |
+          npm ci
+          npm run build
+          test -s public/build/manifest.json
+          test -n "$(find public/build/assets -maxdepth 1 -name '*.css' -print -quit)"
+          test -n "$(find public/build/assets -maxdepth 1 -name '*.js' -print -quit)"
+
+      - name: Upload Laravel application files
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: ${{ steps.ftp.outputs.host }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          port: ${{ steps.ftp.outputs.port }}
+          protocol: ${{ steps.ftp.outputs.protocol }}
+          local-dir: ./
+          server-dir: ${{ steps.ftp.outputs.app_dir }}
+          state-name: utilityflow-app-sync-state.json
+          timeout: 1200000
+          log-level: standard
+          exclude: |
+            **/.git*/**
+            **/.github/**
+            **/.agents/**
+            **/.claude/**
+            **/.codex/**
+            **/node_modules/**
+            **/vendor/**
+            **/vendor.zip
+            **/vendor.part.**
+            **/vendor.manifest.json
+            **/tests/**
+            **/storage/logs/**
+            **/storage/framework/cache/data/**
+            **/storage/framework/sessions/**
+            **/storage/framework/views/**
+            **/storage/pail/**
+            **/.env
+            **/.env.*
+            **/*.sql
+            **/*.zip
+            **/*.ps1
+            **/README.md
+            **/AGENTS.md
+            **/phpunit.xml
+            **/.phpunit*
+            **/public/hot
+            **/public/storage
+
+      - name: Upload public document root
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
+        with:
+          server: ${{ steps.ftp.outputs.host }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          port: ${{ steps.ftp.outputs.port }}
+          protocol: ${{ steps.ftp.outputs.protocol }}
+          local-dir: ./public/
+          server-dir: ${{ steps.ftp.outputs.public_dir }}
+          state-name: utilityflow-public-sync-state.json
+          timeout: 1200000
+          log-level: standard
+          exclude: |
+            **/hot
+            **/storage/**
+
+      - name: Clear stale production bootstrap cache
+        env:
+          DEPLOY_SITE_URL: ${{ secrets.DEPLOY_SITE_URL }}
+          DEPLOY_EXTRACT_TOKEN: ${{ secrets.DEPLOY_EXTRACT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$DEPLOY_SITE_URL" || -z "$DEPLOY_EXTRACT_TOKEN" ]]; then
+            echo "::error::Set DEPLOY_SITE_URL and DEPLOY_EXTRACT_TOKEN secrets; see .github/FTP_DEPLOYMENT.md."
+            exit 1
+          fi
+          URL="${DEPLOY_SITE_URL%/}/deploy-clear-cache.php"
+          STATUS=$(curl -sS --connect-timeout 20 --max-time 120 -X POST -H "Authorization: Bearer $DEPLOY_EXTRACT_TOKEN" -o "$RUNNER_TEMP/cache-clear.txt" -w '%{http_code}' "$URL" || true)
+          cat "$RUNNER_TEMP/cache-clear.txt"
+          if [[ "$STATUS" != "200" ]]; then
+            echo "::error::Protected cache clear failed with HTTP ${STATUS:-000}."
+            exit 1
+          fi
