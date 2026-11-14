@@ -94,10 +94,19 @@
                     <label class="dialog-field dialog-field-wide unit-property-field"><span>Select the parent property <b>*</b></span><select name="values[property]" data-value-field="property" required><option value="">Choose the property this unit belongs to</option>@foreach($propertyOptions as $option)@php($optionValue = is_array($option) ? $option['value'] : $option)@php($optionLabel = is_array($option) ? $option['label'] : $option)<option value="{{ $optionValue }}" @selected((string) old('values.property') === (string) $optionValue)>{{ $optionLabel }}</option>@endforeach</select><small>First choose the property, then enter its unit label below.</small></label>
                     <label class="dialog-field" data-single-unit-field><span>Unit label <b>*</b></span><input name="title" value="{{ old('title') }}" required maxlength="180" placeholder="For example, A, B, A1 or 4B" data-field="title">@error('title')<small class="field-error">{{ $message }}</small>@enderror</label>
                     <label class="dialog-field" data-bulk-unit-field hidden><span>How many similar units? <b>*</b></span><input name="bulk_count" type="number" min="2" max="500" value="{{ old('bulk_count', 10) }}" disabled data-bulk-count><small>Choose from 2 to 500 units.</small></label>
-                    <label class="dialog-field" data-bulk-unit-field hidden><span>Label prefix (optional)</span><input name="bulk_prefix" maxlength="40" placeholder="e.g. A" disabled data-bulk-prefix><small>Labels will be A1, A2, A3…</small></label>
+                    <label class="dialog-field" data-bulk-unit-field hidden><span>Label prefix (optional)</span><input name="bulk_prefix" maxlength="40" placeholder="e.g. A" disabled data-bulk-prefix><small>Labels will use this prefix, for example A1, A2, A3…</small></label>
                     <label class="dialog-field" data-bulk-unit-field hidden><span>Label sequence</span><select name="bulk_sequence" disabled data-bulk-sequence><option value="numeric" @selected(old('bulk_sequence', 'numeric') === 'numeric')>Numbers (1, 2, 3…)</option><option value="letters" @selected(old('bulk_sequence') === 'letters')>Letters (A, B, C…)</option></select></label>
                     <label class="dialog-field" data-bulk-unit-field hidden><span data-bulk-start-label>Start number</span><input name="bulk_start" type="text" value="{{ old('bulk_start', '1') }}" disabled data-bulk-start><small data-bulk-start-help>First generated label will use this number.</small></label>
                     <div class="dialog-field dialog-field-wide bulk-unit-preview" data-bulk-preview hidden></div>
+                    <section class="dialog-field dialog-field-wide" data-bulk-occupancy hidden>
+                        <strong>Occupancy counts</strong><small>Enter how many units have each status. Counts must add up to the batch size.</small>
+                        <div class="occupancy-count-status" data-bulk-occupancy-total role="status" aria-live="polite"></div>
+                        <div class="unit-group-fields">
+                            @foreach(['vacant' => 'Vacant', 'occupied' => 'Occupied', 'reserved' => 'Reserved', 'maintenance' => 'Maintenance'] as $occupancyKey => $occupancyLabel)
+                                <label class="dialog-field"><span>{{ $occupancyLabel }}</span><input type="number" min="0" value="{{ $occupancyKey === 'vacant' ? old('occupancy_counts.vacant', 10) : old('occupancy_counts.'.$occupancyKey, 0) }}" name="occupancy_counts[{{ $occupancyKey }}]" data-bulk-occupancy-count="{{ $occupancyKey }}" disabled></label>
+                            @endforeach
+                        </div>
+                    </section>
                     <section class="dialog-field dialog-field-wide mixed-unit-groups" data-mixed-groups hidden>
                         <div class="mixed-groups-heading"><div><strong>Unit type groups</strong><small>Each group gets its own unit type and label sequence.</small></div><button type="button" class="button button-muted" data-add-unit-group>＋ Add group</button></div>
                         <div data-unit-group-list></div>
@@ -112,10 +121,16 @@
                                 <label class="dialog-field"><span>Label prefix (optional)</span><input data-group-field="prefix" maxlength="40" placeholder="e.g. A-"></label>
                                 <label class="dialog-field"><span>Sequence</span><select data-group-field="sequence"><option value="numeric">Numbers</option><option value="letters">Letters</option></select></label>
                                 <label class="dialog-field"><span data-group-start-label>Start number</span><input data-group-field="start" value="1" required></label>
+                                <div class="dialog-field dialog-field-wide"><strong>Occupancy counts</strong><small>These counts must add up to this group’s quantity.</small><div class="occupancy-count-status" data-group-occupancy-total role="status" aria-live="polite"></div><div class="unit-group-fields">
+                                    <label class="dialog-field"><span>Vacant</span><input data-group-field="vacant" type="number" min="0" value="1" required></label>
+                                    <label class="dialog-field"><span>Occupied</span><input data-group-field="occupied" type="number" min="0" value="0" required></label>
+                                    <label class="dialog-field"><span>Reserved</span><input data-group-field="reserved" type="number" min="0" value="0" required></label>
+                                    <label class="dialog-field"><span>Maintenance</span><input data-group-field="maintenance" type="number" min="0" value="0" required></label>
+                                </div></div>
                             </div>
                         </div>
                     </template>
-                    <label class="dialog-field"><span>Occupancy <b>*</b></span><select name="status" required data-field="status">@foreach($statuses as $status)<option value="{{ $status }}" @selected(old('status', $statuses[0]) === $status)>{{ $status }}</option>@endforeach</select></label>
+                    <label class="dialog-field" data-single-occupancy><span>Occupancy <b>*</b></span><select name="status" required data-field="status">@foreach($statuses as $status)<option value="{{ $status }}" @selected(old('status', $statuses[0]) === $status)>{{ $status }}</option>@endforeach</select></label>
                 @elseif($module['key'] === 'occupants')
                     <label class="dialog-field dialog-field-wide unit-property-field"><span>Assign tenant to property unit <b>*</b></span><select name="values[unit]" data-value-field="unit" required><option value="">Choose property → unit label</option>@foreach($unitOptions as $option)@php($optionValue = is_array($option) ? $option['value'] : $option)@php($optionLabel = is_array($option) ? $option['label'] : $option)<option value="{{ $optionValue }}" @selected((string) old('values.unit') === (string) $optionValue)>{{ $optionLabel }}</option>@endforeach</select><small>Selecting the unit also identifies its parent property.</small></label>
                     <label class="dialog-field"><span>Tenant full name <b>*</b></span><input name="title" value="{{ old('title') }}" required maxlength="180" placeholder="Tenant's full name" data-field="title">@error('title')<small class="field-error">{{ $message }}</small>@enderror</label>

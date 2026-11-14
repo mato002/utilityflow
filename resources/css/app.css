@@ -687,6 +687,24 @@ dialog[open] { position: fixed; inset: 0; margin: auto; }
 .app-shell .sidebar { background: var(--brand-sidebar); border-color: var(--brand-border); }
 .app-shell .topbar, .app-shell .workspace-subnav { background: var(--brand-header); border-color: var(--brand-border); }
 .app-shell .main-content { background: var(--brand-canvas); }
+.app-shell .sidebar { color: #fff; border-right-color: color-mix(in srgb, var(--brand-sidebar) 78%, #000); }
+.app-shell .sidebar .brand, .app-shell .sidebar .workspace-name, .app-shell .sidebar .user-details { color: #fff; }
+.app-shell .sidebar .brand-accent { color: color-mix(in srgb, var(--brand-light) 38%, #fff); }
+.app-shell .sidebar .workspace-select { background: color-mix(in srgb, var(--brand-sidebar) 82%, #fff); border-color: color-mix(in srgb, var(--brand-sidebar) 72%, #fff); }
+.app-shell .sidebar .workspace-name small, .app-shell .sidebar .user-details small { color: color-mix(in srgb, var(--brand-sidebar) 38%, #fff); }
+.app-shell .sidebar .workspace-caret, .app-shell .sidebar .nav-icon, .app-shell .sidebar .logout-button { color: color-mix(in srgb, var(--brand-sidebar) 32%, #fff); }
+.app-shell .sidebar .nav-caption { color: color-mix(in srgb, var(--brand-sidebar) 38%, #fff); }
+.app-shell .sidebar .nav-item { color: color-mix(in srgb, var(--brand-sidebar) 24%, #fff); }
+.app-shell .sidebar .nav-item.active { color: var(--brand-strong); background: #fff; }
+.app-shell .sidebar .nav-item.active .nav-icon { color: var(--brand-primary); }
+.app-shell .sidebar .workspace-icon, .app-shell .sidebar .avatar { background: color-mix(in srgb, var(--brand-sidebar) 75%, #fff); color: #fff; }
+.app-shell .sidebar .help-card { background: color-mix(in srgb, var(--brand-sidebar) 80%, #fff); }
+.app-shell .sidebar .help-card strong { color: #fff; }
+.app-shell .sidebar .help-card p { color: color-mix(in srgb, var(--brand-sidebar) 32%, #fff); }
+.app-shell .sidebar .help-orb { background: color-mix(in srgb, var(--brand-sidebar) 68%, #fff); color: #fff; }
+.app-shell .sidebar .user-menu { border-top-color: color-mix(in srgb, var(--brand-sidebar) 76%, #fff); }
+.app-shell .topbar, .app-shell .workspace-subnav { box-shadow: 0 1px 0 color-mix(in srgb, var(--brand-primary) 7%, transparent); }
+.app-shell .topbar .breadcrumbs strong { color: var(--brand-strong); }
 .app-shell .brand-accent, .app-shell .nav-item.active, .app-shell .help-card a, .app-shell .inline-action, .app-shell .row-action:not(.row-action-danger), .app-shell .owner-label, .app-shell .setup-guide-link { color: var(--brand-primary); }
 .app-shell .workspace-icon { background: var(--brand-light); color: var(--brand-strong); }
 .app-shell .nav-item.active { background: var(--brand-soft); }
@@ -1074,6 +1092,10 @@ body { font-size: 16px; }
 .unit-group-card { margin-top: 12px; padding: 12px; border: 1px solid #e0e8e5; border-radius: 9px; background: white; }
 .unit-group-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
 .unit-group-fields .dialog-field { min-width: 0; }
+.occupancy-count-status { margin-top: 8px; padding: 8px 10px; border-radius: 7px; font-size: 12px; font-weight: 600; }
+.occupancy-count-status.is-balanced { color: #216b4a; background: #eaf7ef; }
+.occupancy-count-status.is-under { color: #775b13; background: #fff7df; }
+.occupancy-count-status.is-over { color: #9a3c36; background: #fff0ed; }
 .mixed-unit-groups > [data-mixed-preview] { margin-top: 12px; }
 .unit-bulk-mode > small, .bulk-unit-preview { color: #6b7d78; font-size: 11px; }
 .unit-bulk-mode > small { display: block; margin-top: 8px; }

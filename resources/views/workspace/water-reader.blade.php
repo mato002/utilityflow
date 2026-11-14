@@ -1,11 +1,9 @@
-@extends('layouts.water-reader')
+@extends('layouts.workspace')
+@php($title = 'Water readings')
+@php($pageTitle = 'Water readings')
 
-@section('content')
-    <main class="water-app" data-water-app>
-        <header class="water-app-header">
-            <a class="water-app-brand" href="{{ route('water.readings') }}" aria-label="Water Reader home"><span class="water-app-brand-icon">W</span><span>UtilityFlow <small>WATER READER</small></span></a>
-            <div class="water-app-account"><span>{{ auth()->user()->name }}</span><form method="POST" action="{{ route('logout') }}">@csrf<button type="submit">Sign out</button></form></div>
-        </header>
+@section('workspace-content')
+    <div class="water-app" data-water-app>
 
         <section class="water-app-intro">
             <div><p class="eyebrow">METER COLLECTION</p><h1>Water readings</h1><p>Choose a property, enter each meter’s new value, and review the calculated usage before submitting.</p></div>
@@ -48,7 +46,7 @@
                             @foreach($propertyUnits as $unit)
                                 @php($assignmentsForUnit = $unitAssignments->get($unit->id, collect()))
                                 <article class="water-unit-card">
-                                    <div class="water-unit-heading"><div><h3>{{ $unit->unit_number }}</h3><p>{{ $unit->unit_type ?: 'Unit' }}@if($unit->block) · {{ $unit->block->name }}@endif</p></div><span class="water-unit-count">{{ $assignmentsForUnit->count() }} {{ IlluminateSupportStr::plural('water meter', $assignmentsForUnit->count()) }}</span></div>
+                                    <div class="water-unit-heading"><div><h3>{{ $unit->unit_number }}</h3><p>{{ $unit->unit_type ?: 'Unit' }}@if($unit->block) · {{ $unit->block->name }}@endif</p></div><span class="water-unit-count">{{ $assignmentsForUnit->count() }} {{ \Illuminate\Support\Str::plural('water meter', $assignmentsForUnit->count()) }}</span></div>
                                     @forelse($assignmentsForUnit as $assignment)
                                         @php($meter = $assignment->meter)
                                         @php($previous = (float) ($meter->last_approved_reading ?? $meter->initial_reading))
@@ -105,6 +103,5 @@
             </section>
         @endif
 
-        <footer class="water-app-footer"><span>© {{ now()->year }} UtilityFlow · {{ $organization->name }}</span><a href="{{ route('workspace.module', 'readings') }}">Back to workspace</a></footer>
-    </main>
+    </div>
 @endsection

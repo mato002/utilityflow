@@ -173,7 +173,7 @@ function setUnitBulkMode(form, mode) {
     form.querySelectorAll('[data-single-unit-field]').forEach((field) => { field.hidden = isBulk || isMixed; });
     form.querySelectorAll('[data-bulk-unit-field]').forEach((field) => {
         field.hidden = !isBulk;
-        const input = field.querySelector('input');
+        const input = field.querySelector('input, select');
         if (input) input.disabled = !isBulk;
     });
     const preview = form.querySelector('[data-bulk-preview]');
@@ -181,6 +181,17 @@ function setUnitBulkMode(form, mode) {
     const mixedGroups = form.querySelector('[data-mixed-groups]');
     mixedGroups.hidden = !isMixed;
     mixedGroups.querySelectorAll('input, select').forEach((field) => { field.disabled = !isMixed; });
+    const bulkOccupancy = form.querySelector('[data-bulk-occupancy]');
+    if (bulkOccupancy) {
+        bulkOccupancy.hidden = !isBulk;
+        bulkOccupancy.querySelectorAll('input').forEach((field) => { field.disabled = !isBulk; });
+    }
+    const singleOccupancy = form.querySelector('[data-single-occupancy]');
+    if (singleOccupancy) {
+        singleOccupancy.hidden = isBulk || isMixed;
+        singleOccupancy.querySelector('select').disabled = isBulk || isMixed;
+    }
+    updateBulkOccupancyTotal(form);
     modeSection.querySelectorAll('[data-unit-mode]').forEach((button) => button.classList.toggle('is-active', button.dataset.unitMode === mode));
     const title = form.querySelector('[data-field="title"]');
     if (title) title.disabled = isBulk || isMixed;
@@ -204,7 +215,11 @@ function updateBulkUnitPreview(form) {
     const numericStart = Math.max(0, Number(rawStart || 0));
     const prefix = form.querySelector('[data-bulk-prefix]')?.value || '';
     const letterStart = letterLabelIndex(rawStart);
-    const labels = Array.from({ length: Math.min(count, 5) }, (_, index) => `${prefix}${sequence === 'letters' ? letterLabel(letterStart + index) : numericStart + index}`);
+    const prefixField = form.querySelector('[data-bulk-prefix]');
+    if (prefixField) prefixField.disabled = sequence === 'letters' || form.querySelector('[data-bulk-mode-field]')?.value !== 'bulk';
+    const prefixHelp = prefixField?.closest('label')?.querySelector('small');
+    if (prefixHelp) prefixHelp.textContent = sequence === 'letters' ? 'Letter sequences use the start letter directly (A, B, C…). Prefixes apply to number sequences.' : 'Labels will use this prefix, for example A1, A2, A3…';
+    const labels = Array.from({ length: Math.min(count, 5) }, (_, index) => `${sequence === 'letters' ? '' : prefix}${sequence === 'letters' ? letterLabel(letterStart + index) : numericStart + index}`);
     preview.textContent = `Preview: ${labels.join(', ')}${count > labels.length ? ', …' : ''} · ${count} units`;
     const startLabel = form.querySelector('[data-bulk-start-label]');
     const startHelp = form.querySelector('[data-bulk-start-help]');
@@ -231,7 +246,15 @@ function letterLabel(index) {
 document.querySelectorAll('[data-unit-bulk-mode]').forEach((section) => {
     const form = section.closest('form');
     section.querySelectorAll('[data-unit-mode]').forEach((button) => button.addEventListener('click', () => setUnitBulkMode(form, button.dataset.unitMode)));
-    form.querySelectorAll('[data-bulk-count], [data-bulk-start], [data-bulk-prefix]').forEach((field) => field.addEventListener('input', () => updateBulkUnitPreview(form)));
+    form.querySelectorAll('[data-bulk-count], [data-bulk-start], [data-bulk-prefix]').forEach((field) => field.addEventListener('input', () => {
+        if (field.matches('[data-bulk-count]')) {
+            const counts = [...form.querySelectorAll('[data-bulk-occupancy-count]')];
+            if (counts.filter((item) => Number(item.value || 0) > 0 && item.dataset.bulkOccupancyCount !== 'vacant').length === 0) counts.find((item) => item.dataset.bulkOccupancyCount === 'vacant').value = field.value;
+        }
+        updateBulkOccupancyTotal(form);
+        updateBulkUnitPreview(form);
+    }));
+    form.querySelectorAll('[data-bulk-occupancy-count]').forEach((field) => field.addEventListener('input', () => updateBulkOccupancyTotal(form)));
     form.querySelector('[data-bulk-sequence]')?.addEventListener('change', () => updateBulkUnitPreview(form));
 
     const groupList = form.querySelector('[data-unit-group-list]');
@@ -273,9 +296,22 @@ document.querySelectorAll('[data-unit-bulk-mode]').forEach((section) => {
     } else {
         addGroup();
     }
-    if (form.closest('dialog')?.dataset.openOnError === 'true') {
-        setUnitBulkMode(form, form.querySelector('[data-bulk-mode-field]')?.value || 'single');
-    }
+    updateBulkOccupancyTotal(form);
+    setUnitBulkMode(form, form.querySelector('[data-bulk-mode-field]')?.value || 'single');
+    form.addEventListener('submit', (event) => {
+        const mode = form.querySelector('[data-bulk-mode-field]')?.value;
+        if (mode === 'bulk' && !updateBulkOccupancyTotal(form)) {
+            event.preventDefault();
+            form.querySelector('[data-bulk-occupancy-count]')?.focus();
+        }
+        if (mode === 'mixed') {
+            const invalidGroup = [...form.querySelectorAll('[data-unit-group]')].find((group) => !updateGroupOccupancyTotal(group));
+            if (invalidGroup) {
+                event.preventDefault();
+                invalidGroup.querySelector('[data-group-field="count"]')?.focus();
+            }
+        }
+    });
 });
 
 function reindexUnitGroups(form) {
@@ -283,6 +319,50 @@ function reindexUnitGroups(form) {
         group.querySelectorAll('[data-group-field]').forEach((field) => { field.name = `unit_groups[${index}][${field.dataset.groupField}]`; });
         group.querySelector('[data-unit-group-heading] strong')?.replaceChildren(`Group ${index + 1}`);
     });
+}
+
+function updateBulkOccupancyTotal(form) {
+    const count = Number(form.querySelector('[data-bulk-count]')?.value || 0);
+    const total = [...form.querySelectorAll('[data-bulk-occupancy-count]')].reduce((sum, field) => sum + Number(field.value || 0), 0);
+    const message = form.querySelector('[data-bulk-occupancy-total]');
+    if (message) {
+        const difference = Math.abs(count - total);
+        message.classList.remove('is-balanced', 'is-under', 'is-over');
+        if (total === count) {
+            message.textContent = `Occupancy counts match: ${total} of ${count} units.`;
+            message.classList.add('is-balanced');
+        } else if (total < count) {
+            message.textContent = `${difference} unit${difference === 1 ? '' : 's'} still need an occupancy status (${total} of ${count} assigned).`;
+            message.classList.add('is-under');
+        } else {
+            message.textContent = `Too many statuses by ${difference}: ${total} entered for ${count} units. Reduce the counts to ${count}.`;
+            message.classList.add('is-over');
+        }
+    }
+
+    return total === count;
+}
+
+function updateGroupOccupancyTotal(group) {
+    const count = Number(group.querySelector('[data-group-field="count"]')?.value || 0);
+    const total = ['vacant', 'occupied', 'reserved', 'maintenance'].reduce((sum, status) => sum + Number(group.querySelector(`[data-group-field="${status}"]`)?.value || 0), 0);
+    const message = group.querySelector('[data-group-occupancy-total]');
+    if (message) {
+        const difference = Math.abs(count - total);
+        message.classList.remove('is-balanced', 'is-under', 'is-over');
+        if (total === count) {
+            message.textContent = `Occupancy counts match: ${total} of ${count} units.`;
+            message.classList.add('is-balanced');
+        } else if (total < count) {
+            message.textContent = `${difference} unit${difference === 1 ? '' : 's'} still need a status (${total} of ${count} assigned).`;
+            message.classList.add('is-under');
+        } else {
+            message.textContent = `Too many statuses by ${difference}: ${total} entered for ${count} units. Reduce the counts to ${count}.`;
+            message.classList.add('is-over');
+        }
+    }
+
+    return total === count;
 }
 
 function resetUnitGroups(form) {
@@ -300,12 +380,16 @@ function updateMixedUnitGroups(form) {
     groups.forEach((group) => {
         const count = Math.max(1, Number(group.querySelector('[data-group-field="count"]').value || 1));
         const type = group.querySelector('[data-group-field="unit_type"]').value || 'Unit type';
-        const prefix = group.querySelector('[data-group-field="prefix"]').value || '';
+        const prefixField = group.querySelector('[data-group-field="prefix"]');
+        const prefix = prefixField.value || '';
         const sequence = group.querySelector('[data-group-field="sequence"]').value;
+        prefixField.disabled = sequence === 'letters' || form.querySelector('[data-bulk-mode-field]')?.value !== 'mixed';
         const rawStart = group.querySelector('[data-group-field="start"]').value || (sequence === 'letters' ? 'A' : '1');
         const start = sequence === 'letters' ? letterLabelIndex(/^[A-Za-z]+$/.test(rawStart) ? rawStart : 'A') : Math.max(0, Number(rawStart || 0));
-        const first = `${prefix}${sequence === 'letters' ? letterLabel(start) : start}`;
-        labels.push(`${type}: ${first}${count > 1 ? ` + ${count - 1} more` : ''}`);
+        const first = `${sequence === 'letters' ? '' : prefix}${sequence === 'letters' ? letterLabel(start) : start}`;
+        const occupancy = ['vacant', 'occupied', 'reserved', 'maintenance'].reduce((sum, status) => sum + Number(group.querySelector(`[data-group-field="${status}"]`).value || 0), 0);
+        updateGroupOccupancyTotal(group);
+        labels.push(`${type}: ${first}${count > 1 ? ` + ${count - 1} more` : ''} · occupancy ${occupancy}/${count}`);
         total += count;
     });
     const preview = form.querySelector('[data-mixed-preview]');

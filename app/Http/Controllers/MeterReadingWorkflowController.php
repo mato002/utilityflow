@@ -69,6 +69,9 @@ class MeterReadingWorkflowController extends Controller
         if ($request->routeIs('water.readings')) {
             return view('workspace.water-reader', [
                 'organization' => $organization,
+                'organizations' => $request->user()->organizations()->where('organizations.status', 'active')->orderBy('name')->get(),
+                'roleName' => $organization->users()->where('users.id', $request->user()->id)->first()?->pivot?->role_id
+                    ? Role::find($organization->users()->where('users.id', $request->user()->id)->first()->pivot->role_id)?->name : null,
                 'properties' => $properties,
                 'selectedProperty' => $selectedProperty,
                 'propertyUnits' => $propertyUnits,

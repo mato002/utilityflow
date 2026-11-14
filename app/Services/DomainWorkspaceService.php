@@ -136,12 +136,21 @@ class DomainWorkspaceService
             'bulk_prefix' => ['nullable', 'string', 'max:40'],
             'bulk_sequence' => ['required', Rule::in(['numeric', 'letters'])],
             'bulk_start' => ['required', 'string', 'max:50'],
+            'occupancy_counts' => ['required', 'array:vacant,occupied,reserved,maintenance'],
+            'occupancy_counts.vacant' => ['required', 'integer', 'min:0'],
+            'occupancy_counts.occupied' => ['required', 'integer', 'min:0'],
+            'occupancy_counts.reserved' => ['required', 'integer', 'min:0'],
+            'occupancy_counts.maintenance' => ['required', 'integer', 'min:0'],
         ]);
 
         $count = (int) $request->input('bulk_count');
         $prefix = trim((string) $request->input('bulk_prefix', ''));
         $sequence = $request->input('bulk_sequence');
         $start = trim((string) $request->input('bulk_start'));
+        $occupancyCounts = $request->input('occupancy_counts');
+        if (array_sum($occupancyCounts) !== $count) {
+            throw ValidationException::withMessages(['occupancy_counts' => 'Occupancy counts must add up to the batch size.']);
+        }
         if ($sequence === 'numeric' && ! ctype_digit($start)) {
             throw ValidationException::withMessages(['bulk_start' => 'Enter a number to start the numeric sequence.']);
         }
@@ -149,14 +158,14 @@ class DomainWorkspaceService
             throw ValidationException::withMessages(['bulk_start' => 'Enter letters only, such as A or AA, to start the letter sequence.']);
         }
         $labels = collect(range(0, $count - 1))->map(function (int $offset) use ($prefix, $start, $sequence): string {
-            return $prefix.($sequence === 'numeric' ? (string) ((int) $start + $offset) : $this->excelLabel($this->excelLabelIndex($start) + $offset));
+            return $sequence === 'numeric' ? $prefix.(string) ((int) $start + $offset) : $this->excelLabel($this->excelLabelIndex($start) + $offset);
         });
         if ($labels->max(fn (string $label): int => strlen($label)) > 50) {
             throw ValidationException::withMessages(['bulk_prefix' => 'Generated unit labels must be 50 characters or fewer.']);
         }
         $input = $request->all();
         $input['title'] = $labels->first();
-        $request->merge(['title' => $input['title']]);
+        $request->merge(['title' => $input['title'], 'status' => 'Vacant']);
         $this->validateRecord($request, 'spaces', $organizationId, null);
 
         $property = Property::where('organization_id', $organizationId)->findOrFail(data_get($input, 'values.property'));
@@ -165,13 +174,14 @@ class DomainWorkspaceService
             throw ValidationException::withMessages(['bulk_count' => 'These unit labels already exist: '.$duplicates->implode(', ')]);
         }
 
-        return DB::transaction(function () use ($request, $organizationId, $actor, $input, $labels, $count): Unit {
+        return DB::transaction(function () use ($request, $organizationId, $actor, $input, $labels, $count, $occupancyCounts): Unit {
             app(PlanLimitService::class)->assertCanAdd(Organization::findOrFail($organizationId), 'units', $count);
             $first = null;
-            foreach ($labels as $label) {
+            $statuses = collect(['vacant', 'occupied', 'reserved', 'maintenance'])->flatMap(fn (string $status): array => array_fill(0, (int) $occupancyCounts[$status], $status))->values();
+            foreach ($labels as $index => $label) {
                 $unitInput = $input;
                 $unitInput['title'] = $label;
-                $unit = $this->saveUnit(null, $organizationId, $unitInput, $input['values'] ?? [], Str::lower($input['status']));
+                $unit = $this->saveUnit(null, $organizationId, $unitInput, $input['values'] ?? [], $statuses[$index]);
                 $first ??= $unit;
                 app(AuditLogger::class)->record($organizationId, $actor->id, 'spaces.created', $unit, null, $unit->getAttributes(), $request);
             }
@@ -189,6 +199,10 @@ class DomainWorkspaceService
             'unit_groups.*.prefix' => ['nullable', 'string', 'max:40'],
             'unit_groups.*.sequence' => ['required', Rule::in(['numeric', 'letters'])],
             'unit_groups.*.start' => ['required', 'string', 'max:50'],
+            'unit_groups.*.vacant' => ['required', 'integer', 'min:0'],
+            'unit_groups.*.occupied' => ['required', 'integer', 'min:0'],
+            'unit_groups.*.reserved' => ['required', 'integer', 'min:0'],
+            'unit_groups.*.maintenance' => ['required', 'integer', 'min:0'],
         ]);
         $groups = $validated['unit_groups'];
         $total = array_sum(array_column($groups, 'count'));
@@ -198,10 +212,13 @@ class DomainWorkspaceService
 
         $input = $request->all();
         $input['title'] = 'Mixed unit batch';
-        $request->merge(['title' => $input['title']]);
+        $request->merge(['title' => $input['title'], 'status' => 'Vacant']);
         $this->validateRecord($request, 'spaces', $organizationId, null);
         $property = Property::where('organization_id', $organizationId)->findOrFail(data_get($input, 'values.property'));
         $unitGroups = collect($groups)->map(function (array $group, int $index): array {
+            if (array_sum(array_map('intval', array_intersect_key($group, array_flip(['vacant', 'occupied', 'reserved', 'maintenance'])))) !== (int) $group['count']) {
+                throw ValidationException::withMessages(["unit_groups.{$index}.vacant" => 'Occupancy counts must add up to this group’s quantity.']);
+            }
             $start = trim($group['start']);
             if ($group['sequence'] === 'numeric' && ! ctype_digit($start)) {
                 throw ValidationException::withMessages(["unit_groups.{$index}.start" => 'Enter a number to start this sequence.']);
@@ -209,12 +226,14 @@ class DomainWorkspaceService
             if ($group['sequence'] === 'letters' && ! preg_match('/^[A-Za-z]+$/', $start)) {
                 throw ValidationException::withMessages(["unit_groups.{$index}.start" => 'Enter letters such as A or AA to start this sequence.']);
             }
-            $labels = collect(range(0, (int) $group['count'] - 1))->map(fn (int $offset): string => trim((string) ($group['prefix'] ?? '')).($group['sequence'] === 'numeric' ? (string) ((int) $start + $offset) : $this->excelLabel($this->excelLabelIndex($start) + $offset)));
+            $labels = collect(range(0, (int) $group['count'] - 1))->map(fn (int $offset): string => ($group['sequence'] === 'numeric' ? trim((string) ($group['prefix'] ?? '')).(string) ((int) $start + $offset) : $this->excelLabel($this->excelLabelIndex($start) + $offset)));
             if ($labels->contains(fn (string $label): bool => strlen($label) > 50)) {
                 throw ValidationException::withMessages(["unit_groups.{$index}.prefix" => 'Generated unit labels must be 50 characters or fewer.']);
             }
 
-            return ['unit_type' => trim($group['unit_type']), 'labels' => $labels];
+            $statuses = collect(['vacant', 'occupied', 'reserved', 'maintenance'])->flatMap(fn (string $status): array => array_fill(0, (int) $group[$status], $status))->values();
+
+            return ['unit_type' => trim($group['unit_type']), 'labels' => $labels, 'statuses' => $statuses];
         });
         $labels = $unitGroups->flatMap(fn (array $group) => $group['labels']);
         if ($labels->duplicates()->isNotEmpty()) {
@@ -229,12 +248,12 @@ class DomainWorkspaceService
             app(PlanLimitService::class)->assertCanAdd(Organization::findOrFail($organizationId), 'units', $total);
             $first = null;
             foreach ($unitGroups as $group) {
-                foreach ($group['labels'] as $label) {
+                foreach ($group['labels'] as $index => $label) {
                     $unitInput = $input;
                     $unitInput['title'] = $label;
                     $values = $input['values'] ?? [];
                     $values['unit_type'] = $group['unit_type'];
-                    $unit = $this->saveUnit(null, $organizationId, $unitInput, $values, Str::lower($input['status']));
+                    $unit = $this->saveUnit(null, $organizationId, $unitInput, $values, $group['statuses'][$index]);
                     $first ??= $unit;
                     app(AuditLogger::class)->record($organizationId, $actor->id, 'spaces.created', $unit, null, $unit->getAttributes(), $request);
                 }
